@@ -780,7 +780,20 @@ document.addEventListener('pointerdown',()=>{if(audUnlocked)return;audUnlocked=t
 function stopVoice(){VOICE.tok++;try{AUD.pause();}catch(e){}if(synth)synth.cancel();}
 function speakDevice(s,done){if(!synth){done();return;}const u=new SpeechSynthesisUtterance(s);u.rate=.92;u.pitch=.92;if(!pickedVoice)pickedVoice=chooseVoice();if(pickedVoice)u.voice=pickedVoice;
   let fin=false;const end=()=>{if(fin)return;fin=true;done();};u.onend=end;u.onerror=end;setTimeout(end,1500+s.length*110);synth.speak(u);}
+const NUMW=['zero','one','two','three','four','five','six','seven','eight','nine','ten','eleven','twelve','thirteen','fourteen','fifteen','sixteen','seventeen','eighteen','nineteen'],TENW=['','','twenty','thirty','forty','fifty','sixty','seventy','eighty','ninety'];
+function numWords(n){if(n<20)return NUMW[n];const t=TENW[Math.floor(n/10)];return n%10?t+' '+NUMW[n%10]:t;}
+function numPieces(n){if(n<100)return [numWords(n)];if(n<1000){const h=NUMW[Math.floor(n/100)]+' hundred';return n%100?[h,numWords(n%100)]:[h];}return null;}
+function normPiece(s){return s.toLowerCase().replace(/[^a-z' ]+/g,' ').replace(/\s+/g,' ').trim();}
+function pieceKey(s){return voiceKey('~'+normPiece(s));}
+function stitchKeys(s){if(!/\d/.test(s))return null;const keys=[];
+  for(const tok of s.split(/(\d+)/)){if(!tok)continue;if(/^\d+$/.test(tok)){const ps=numPieces(+tok);if(!ps)return null;ps.forEach(p=>keys.push(pieceKey(p)));}else{const n=normPiece(tok);if(n)keys.push(pieceKey(n));}}
+  return keys.length&&keys.every(k=>VOICE.have.has(k))?keys:null;}
+function playKeys(keys,s,done){let i=0;const tok=VOICE.tok;const step=()=>{if(tok!==VOICE.tok)return;if(i>=keys.length){done();return;}
+  const k=keys[i++];let fin=false;const nx=()=>{if(fin)return;fin=true;AUD.onended=AUD.onerror=null;step();};
+  AUD.onended=nx;AUD.onerror=()=>{if(fin)return;fin=true;AUD.onended=AUD.onerror=null;i===1?speakDevice(s,done):step();};
+  AUD.src='voice/'+k+'.mp3'+(VOICE.ver?'?v='+VOICE.ver:'');AUD.play().catch(()=>{if(fin)return;fin=true;speakDevice(s,done);});};step();}
 function playClip(s,done){const k=voiceKey(s);
+  if(VOICE.useClips&&VOICE.have&&!VOICE.have.has(k)){const ks=stitchKeys(s);if(ks){playKeys(ks,s,done);return;}}
   if(!(VOICE.useClips&&VOICE.have&&VOICE.have.has(k))){speakDevice(s,done);return;}
   let fin=false;const end=()=>{if(fin)return;fin=true;AUD.onended=AUD.onerror=null;done();};
   AUD.onended=end;AUD.onerror=()=>{if(fin)return;fin=true;AUD.onended=AUD.onerror=null;speakDevice(s,done);};
@@ -1997,25 +2010,52 @@ function openMap(){
 
 (function(){$id('wmap').onclick=()=>{if(world&&world.running)openMap();};})();
 
+const VO_EXTRAS={
+ 'Praise and cheers':['Great job!','You did it!','Wow!','Hooray!','Amazing!','Super!','Awesome work!','Way to go, Sebby!','That was so much fun!','You are so brave!','You are so clever!','High five!','Woo hoo!','Yay!','Well done!','Good thinking!','You are a superstar!','I knew you could do it!','Fantastic!','That was perfect!'],
+ 'Gentle tries':['Oops!','Uh oh!','Almost!','Try again!','Let\'s try one more time.','That\'s okay!','Nice try!','So close!','Let\'s do it together.','No worries!'],
+ 'Story starters and joiners':['Once upon a time...','One sunny morning...','One starry night...','A long time ago...','Suddenly...','Just then...','All of a sudden...','After that...','Then...','Meanwhile...','The next day...','At last...','Later that night...','Far, far away...','Deep in the forest...','High in the sky...','Under the sea...','And then...','But wait!','Guess what happened next!'],
+ 'Story endings':['The end.','And they all lived happily ever after.','Goodnight, Sebby.','Sweet dreams.','Sleep tight.','Time for bed.','What a wonderful adventure!','Best day ever!','Let\'s read another story!','See you next time!'],
+ 'Questions and prompts':['What should we do?','Which way should we go?','Who should we ask for help?','What do you think will happen?','Can you help?','Tap to choose!','Turn the page.','Let\'s count together!','How many can you see?','Ready? Let\'s go!','Are you ready?','Look over there!','What is that?','Where should we look?','Pick one!'],
+ 'Feelings':['Sebby felt so happy.','Sebby felt a little scared.','Sebby felt very brave.','Everyone giggled.','Everyone cheered.','It was so silly!','What a surprise!','Everyone was so proud.','They all smiled.','It was very quiet.'],
+ 'Friends':['Sebby','Zip','Dusk','Echo','Ember','Scout','the little dragon','the robot','the alien','the little star','the monkey','the parrot','the penguin','the crab','the snowman'],
+ 'Places':['the beach','the jungle','the cave','the castle','the forest','the moon','outer space','the ocean','the mountain','the village','the desert','the meadow','the snowy hill','the island','the bakery'],
+ 'Colors':['red','orange','yellow','green','blue','purple','pink','brown','black','white','gold','silver','rainbow'],
+ 'Animals':['a puppy','a kitty','a bunny','a bear','a frog','a fox','an owl','a fish','a bird','a butterfly','a dinosaur','a unicorn','a turtle','a horse','a lion','an elephant','a monkey','a penguin'],
+ 'Actions':['Let\'s run!','Let\'s jump!','Let\'s swim!','Let\'s fly!','Let\'s dig!','Let\'s build!','Let\'s explore!','Let\'s sail!','Let\'s climb!','Let\'s dance!','Let\'s hide!','Let\'s look!','Let\'s go home.','Let\'s make a wish!','Let\'s share!']};
 function collectVoiceLines(){
-  const out=new Set(),add=s=>{splitSentences(clean(s)).forEach(x=>{if(!/\d/.test(x))out.add(x);});};
+  const rows=[],seen=new Set(),sec={v:''};
+  const put=(text,section,piece)=>{const k=piece?pieceKey(text):voiceKey(text);if(seen.has(k))return;seen.add(k);rows.push({key:k,text:piece?normPiece(text):text,section});};
+  const add=s=>{splitSentences(clean(s)).forEach(x=>{if(!/\d/.test(x))put(x,sec.v);});};
+  const tmpl=s=>{const c=clean(s).replace(/\+/g,' plus ').replace(/\s[-−]\s/g,' minus ');splitSentences(c).forEach(x=>{x.split(/\{[a-z]+\}|\d+/).forEach(p=>{if(normPiece(p))put(p,sec.v,true);});});};
+  sec.v='Home and library';
+  add('Hi Sebby! What do you want to do? Story Mode, or Free Play?');
+  add('Welcome to Sebby\'s Story Library! Choose a story: '+Object.values(BOOKS).map(b=>b.title).join('. ')+'.');
+  Object.values(LEVELS).forEach(l=>add(l.say+'.'));add('Goodnight, brave adventurer.');
   Object.values(BOOKS).forEach(bk=>{
+    sec.v='Story: '+bk.title;
     add(`Hi Sebby! Want to play ${bk.title}? Tap play story!`);add(bk.title+'. Choose an age level for the math.');
     Object.values(bk.nodes).forEach(p=>{
       if(p.type==='choice'){add(p.text);add(p.prompt);add('You can choose: '+p.choices.map(c=>clean(c.l)).join(', or, ')+'.');p.choices.forEach(c=>add(clean(c.l)+'.'));}
       else if(p.type==='story'||p.type==='end')add(p.text);
-      else if(p.type==='math'){add(p.text);if(p.win)add("That's right! "+clean(p.win.text));if(p.fail)add(clean(p.fail.text));}
-    });});
-  Object.values(GAMES).forEach(g=>{add(g.text);add(g.instr);add(g.win.text);});
-  add('Welcome to Sebby\'s Story Library! Choose a story: '+Object.values(BOOKS).map(b=>b.title).join('. ')+'.');
+      else if(p.type==='math'){add(p.text);if(p.qt)tmpl(p.qt);if(p.win)add("That's right! "+clean(p.win.text));if(p.fail)add(clean(p.fail.text));}
+    });
+    const g=GAMES[bk.game];if(g){add(g.text);add(g.instr);add(g.win.text);}
+  });
+  sec.v='Math and scores';
+  add('Here is a math problem.');add('What is the answer?');add('Tap a number!');add("That's right!");
+  tmpl('The answer was {a}.');tmpl('You earned {a} out of {b} stars, and your trophy total is {c}.');tmpl('You earned {a} trophies and a star!');tmpl('You earned {a} trophies!');
+  sec.v='Free Play world';
   ISLANDS.forEach(I=>add(`You found ${I.name}!`));add('Here are twenty five trophies!');
-  Object.values(TOOLS).forEach(tl=>{add(`You need a ${tl.name.toLowerCase()}! You can buy one at the shop with your trophies.`);add(`You got the ${tl.name.toLowerCase()}! ${tl.does}!`);add(`You need the ${tl.name.toLowerCase()} first!`);});
+  Object.values(TOOLS).forEach(tl=>{add(`You need a ${tl.name.toLowerCase()}! You can buy one at the shop with your trophies.`);add(`You got the ${tl.name.toLowerCase()}! ${tl.does}!`);add(`You need the ${tl.name.toLowerCase()} first!`);tmpl(`You need {a} more trophies for the ${tl.name.toLowerCase()}.`);});
+  add('Play a story to earn more!');
   Object.values(EAT).forEach(e=>add(e[1]));Object.values(GATHER).forEach(g=>add(g.say));
   ITEMS.forEach(it=>add(it.name+'. Tap where you want it.'));Object.values(SETS).forEach(s=>add(s.name+'!'));
-  Object.values(LEVELS).forEach(l=>add(l.say+'.'));add('Goodnight, brave adventurer.');add('Here is a math problem.');add('What is the answer?');add('Tap a number!');
   const src=document.querySelector('script:not([src])').textContent,re=/narrate\(([^;]*?)\);/g;let m;
   while((m=re.exec(src))){const lits=m[1].match(/'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"|`[^`]*`/g)||[];lits.forEach(l=>{if(l[0]==='`'&&l.includes('${'))return;const s=l.slice(1,-1).replace(/\\'/g,"'");if(s.length>2)add(s);});}
-  const byKey=new Map();[...out].forEach(text=>{const k=voiceKey(text);if(!byKey.has(k))byKey.set(k,text);});return [...byKey].map(([key,text])=>({key,text}));
+  sec.v='Numbers';
+  for(let n=0;n<100;n++)put(numWords(n),sec.v,true);for(let h=1;h<10;h++)put(NUMW[h]+' hundred',sec.v,true);
+  Object.entries(VO_EXTRAS).forEach(([name,list])=>{sec.v='Extras: '+name;list.forEach(x=>put(x,sec.v));});
+  return rows;
 }
 
 migrateMap();loadScores();loadParent();loadChars();loadSurv();showHome();
